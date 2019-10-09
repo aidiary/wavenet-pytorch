@@ -152,6 +152,45 @@ class WaveNet(torch.nn.Module):
 
         return output
 
+    def export_weights(self):
+        """NVWaveNetで読み込むための重みを返す"""
+        model = {}
+        model['embedding_prev'] = torch.cuda.FloatTensor(self.n_out_channels,
+                                                         self.n_residual_channels).fill_(0.0)
+        model['embedding_curr'] = self.embed.weight.detach()
+        model['conv_out_weight'] = self.conv_out.conv.weight.detach()
+        model['conv_end_weight'] = self.conv_end.conv.weight.detach()
+
+        dilate_weights = []
+        dilate_biases = []
+        for layer in self.dilate_layers:
+            dilate_weights.append(layer.conv.weight.detach())
+            dilate_biases.append(layer.conv.bias.detach())
+        model['dilate_weights'] = dilate_weights
+        model['dilate_biases'] = dilate_biases
+
+        model['max_dilation'] = self.max_dilation
+
+        res_weights = []
+        res_biases = []
+        for layer in self.res_layers:
+            res_weights.append(layer.conv.weight.detach())
+            res_biases.append(layer.conv.bias.detach())
+        model['res_weights'] = res_weights
+        model['res_biases'] = res_biases
+
+        skip_weights = []
+        skip_biases = []
+        for layer in self.skip_layers:
+            skip_weights.append(layer.conv.weight.detach())
+            skip_biases.append(layer.conv.bias.detach())
+        model['skip_weights'] = skip_weights
+        model['skip_biases'] = skip_biases
+
+        model['use_embed_tanh'] = False
+
+        return model
+
 
 class Conv(torch.nn.Module):
 
@@ -184,3 +223,6 @@ if __name__ == "__main__":
     forward_input = torch.rand(8, 16000)
     y_pred = model(features, forward_input)
     print(y_pred.shape)
+
+    weights = model.export_weights()
+    print(weights.keys())
