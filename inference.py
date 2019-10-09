@@ -1,7 +1,9 @@
-import torch
-from model import WaveNet
-import nv_wavenet
+import numpy as np
 import scipy.io.wavfile
+import torch
+
+import nv_wavenet
+from model import WaveNet
 from data import TacotronSTFT, load_wav_to_torch
 
 MAX_WAV_VALUE = 32768.0
@@ -43,9 +45,21 @@ def get_cond_input(mel, model):
     return cond_input
 
 
+# TODO: data.mu_law_encode()とともにutilsに切り出し
+def mu_law_decode_numpy(x, mu_quantization=256):
+    # xはmu_law_encodeされている音声
+    assert np.max(x) <= mu_quantization
+    assert np.min(x) >= 0
+    mu = mu_quantization - 1.0
+    signal = 2 * (x / mu) - 1
+    magnitude = (1 / mu) * ((1 + mu) * np.abs(signal) - 1)
+    return np.sign(signal) * magnitude
+
+
 def main():
     model = WaveNet()
-    checkpoint = torch.load('runs/Oct09_11-24-52_K-00030-LIN/checkpoint_0.pth')
+    checkpoint = torch.load(
+        'runs/Oct09_11-24-52_K-00030-LIN/checkpoint_9000.pth')
     model.load_state_dict(checkpoint['model'])
     weights = model.export_weights()
     wavenet = nv_wavenet.NVWaveNet(**weights)
@@ -59,13 +73,20 @@ def main():
     print(mel.shape)
 
     # NVWaveNetの入力に合うように整形
-    cond_input = get_cond_input(mel)
+    # (channels, batch=1, num_layers, samples)
+    cond_input = get_cond_input(mel, model)
 
     # 波形を生成
     # 生成された波形は mu-law された状態なので元に戻す必要がある
-    synth_audio = wavenet.infer(cond_input, nv_wavenet.Impl.AUTO)
-    print(synth_audio.shape)
-    print(synth_audio.min(), synth_audio.max())
+    audio_data = wavenet.infer(cond_input, nv_wavenet.Impl.AUTO)
+    print(audio_data.shape)
+    print(audio_data.min(), audio_data.max())
+
+    # wavenet.Aはmu_quantization
+    audio = mu_law_decode_numpy(audio_data[0].cpu().numpy(), wavenet.A)
+    audio = MAX_WAV_VALUE * audio
+    wavdata = audio.astype('int16')
+    scipy.io.wavfile.write('gen.wav', 16000, wavdata)
 
 
 if __name__ == "__main__":
