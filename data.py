@@ -50,7 +50,7 @@ class WaveNetDataset(torch.utils.data.Dataset):
         else:
             audio = torch.nn.functional.pad(
                 audio,
-                (0, self.segment_length - audio.size(0)), 'constant').data
+                (0, self.segment_length - audio.size(0)), 'constant').detach()
 
         # メルスペクトログラムに変換
         mel = self.get_mel(audio)
@@ -145,7 +145,7 @@ class STFT(torch.nn.Module):
         imag_part = forward_transform[:, cutoff:, :]
 
         magnitude = torch.sqrt(real_part ** 2 + imag_part ** 2)
-        phase = torch.atan2(imag_part.data, real_part.data)
+        phase = torch.atan2(imag_part.detach(), real_part.detach())
 
         return magnitude, phase
 
@@ -171,11 +171,11 @@ class TacotronSTFT(nn.Module):
         return torch.exp(magnitudes) / C
 
     def mel_spectrogram(self, y):
-        assert torch.min(y.data) >= -1
-        assert torch.max(y.data) <= 1
+        assert torch.min(y.detach()) >= -1
+        assert torch.max(y.detach()) <= 1
 
         magnitudes, phases = self.stft_fn(y)
-        magnitudes = magnitudes.data
+        magnitudes = magnitudes.detach()
 
         mel_output = torch.matmul(self.mel_basis, magnitudes)
         mel_output = self.spectral_normalize(mel_output)
