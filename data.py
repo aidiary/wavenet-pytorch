@@ -22,7 +22,7 @@ class WaveNetDataset(torch.utils.data.Dataset):
         self.mu_quantization = mu_quantization
         self.sampling_rate = sampling_rate
 
-        self.audio_files = self.load(target_list_file)
+        self.audio_files = self.load_list_file(target_list_file)
         random.seed(1234)
         random.shuffle(self.audio_files)
 
@@ -31,13 +31,53 @@ class WaveNetDataset(torch.utils.data.Dataset):
                                  win_length=win_length,
                                  sampling_rate=sampling_rate)
 
+    def __len__(self):
+        return len(self.audio_files)
+
     def __getitem__(self, index):
-        pass
+        filename = self.audio_files[index]
+        audio, sampling_rate = load_wav_to_torch(filename)
+        if sampling_rate != self.sampling_rate:
+            raise ValueError("{} SR doesn't match target {} SR".format(
+                sampling_rate, self.sampling_rate))
+
+        # 音声ファイルからランダムにsegment_lengthの長さのセグメントを切り出す
+        # segment_lengthより短い場合はpaddingする
+        if audio.size(0) >= self.segment_length:
+            max_audio_start = audio.size(0) - self.segment_length
+            audio_start = random.randint(0, max_audio_start)
+            audio = audio[audio_start:audio_start + self.segment_length]
+        else:
+            audio = torch.nn.functional.pad(
+                audio,
+                (0, self.segment_length - audio.size(0)), 'constant').data
+
+        # メルスペクトログラムに変換
+        mel = self.get_mel(audio)
+
+        # 音声波形をmu_lawで量子化
+        audio = self.mu_law_encode(audio / MAX_WAV_VALUE, self.mu_quantization)
+
+        return mel, audio
 
     def get_mel(self, audio):
-        pass
+        audio_norm = audio / MAX_WAV_VALUE
+        audio_norm = audio_norm.unsqueeze(0)
+        audio_norm = audio_norm.requires_grad_(False)
+        melspec = self.stft.mel_spectrogram(audio_norm)
+        melspec = torch.squeeze(melspec, 0)
+        return melspec
 
-    def load(self, filename):
+    def mu_law_encode(self, x, mu_quantization=256):
+        assert torch.max(x) <= 1.0
+        assert torch.min(x) >= -1.0
+        mu = mu_quantization - 1.0
+        scaling = np.log1p(mu)
+        x_mu = torch.sign(x) * torch.log1p(mu * torch.abs(x)) / scaling
+        encoding = ((x_mu + 1) / 2 * mu + 0.5).long()
+        return encoding
+
+    def load_list_file(self, filename):
         with open(filename, encoding='utf-8') as f:
             files = f.readlines()
         files = [f.rstrip() for f in files]
@@ -148,15 +188,8 @@ def load_wav_to_torch(wav_path):
 
 
 if __name__ == "__main__":
-    stft = TacotronSTFT()
-    filename = 'data/arctic_a0001.wav'
-    audio, sampling_rate = load_wav_to_torch(filename)
-    print(audio.shape, sampling_rate)
-
-    audio_norm = audio / MAX_WAV_VALUE
-    audio_norm = audio_norm.unsqueeze(0)
-    audio_norm = audio_norm.requires_grad_(False)
-
-    melspec = stft.mel_spectrogram(audio_norm)
-    melspec = torch.squeeze(melspec, 0)
-    print(melspec.shape)
+    train_dataset = WaveNetDataset('train.list')
+    test_dataset = WaveNetDataset('test.list')
+    mel, audio = iter(train_dataset).__next__()
+    print('mel:', mel.dtype, mel.shape)
+    print('audo:', audio.dtype, audio.shape)
